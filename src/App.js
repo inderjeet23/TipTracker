@@ -11,17 +11,17 @@ let firebaseConfig = {};
 let initialAuthToken = null;
 
 // This variable captures the app ID specific to the canvas environment.
-const appId = typeof __app_id !== 'undefined' ? __app_id : null;
+const appId = typeof __app_id !== 'undefined' ? __app_id : null; // eslint-disable-line no-undef
 
 // First, check for the special environment variables provided by the canvas.
-if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+if (typeof __firebase_config !== 'undefined' && __firebase_config) { // eslint-disable-line no-undef
     try {
-        firebaseConfig = JSON.parse(__firebase_config);
+        firebaseConfig = JSON.parse(__firebase_config); // eslint-disable-line no-undef
     } catch (e) {
         console.error("Failed to parse __firebase_config:", e);
     }
-    if (typeof __initial_auth_token !== 'undefined') {
-        initialAuthToken = __initial_auth_token;
+    if (typeof __initial_auth_token !== 'undefined') { // eslint-disable-line no-undef
+        initialAuthToken = __initial_auth_token; // eslint-disable-line no-undef
     }
 } else {
     // If canvas variables aren't present, fall back to process.env for deployed environments.
@@ -127,7 +127,7 @@ export default function App() {
         };
 
         setIsLoading(true);
-        // **FIX**: Use the required path for the canvas environment, and a simpler path for deployment.
+        // Use the required path for the canvas environment, and a simpler path for deployment.
         const tipsCollectionPath = appId
             ? `artifacts/${appId}/users/${userId}/tips`
             : `users/${userId}/tips`;
@@ -216,7 +216,7 @@ const TipLogger = ({ tips, userId, setView }) => {
 
         setIsAdding(true);
         try {
-            // **FIX**: Use the required path for the canvas environment, and a simpler path for deployment.
+            // Use the required path for the canvas environment, and a simpler path for deployment.
             const tipsCollectionPath = appId
                 ? `artifacts/${appId}/users/${userId}/tips`
                 : `users/${userId}/tips`;
