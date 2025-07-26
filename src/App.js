@@ -90,7 +90,6 @@ export default function App() {
             const currentUser = session?.user;
             setUser(currentUser ?? null);
 
-            // If there's no user, sign in anonymously
             if (!currentUser) {
                 supabase.auth.signInAnonymously();
             } else {
@@ -98,10 +97,8 @@ export default function App() {
             }
         });
         
-        // --- Realtime Subscription for Tips ---
         const tipsSubscription = supabase.channel('public:tips')
             .on('postgres_changes', { event: '*', schema: 'public', table: 'tips' }, (payload) => {
-                // When a change occurs, refetch all tips to update the UI
                 if (user) {
                    fetchTips(user.id);
                 }
@@ -112,7 +109,7 @@ export default function App() {
             subscription?.unsubscribe();
             supabase.removeChannel(tipsSubscription);
         };
-    }, [user]);
+    }, []); // <-- THE ONLY CHANGE IS HERE: from [user] to []
 
     // --- Render Logic ---
     if (!isConfigured) {
