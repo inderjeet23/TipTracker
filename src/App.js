@@ -7,7 +7,6 @@ import { DollarSign, BarChart2, ArrowLeft, Plus, Sparkles } from 'lucide-react';
 const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 
-// Check if Supabase is configured
 const isConfigured = supabaseUrl && supabaseAnonKey;
 let supabase;
 if (isConfigured) {
@@ -16,9 +15,7 @@ if (isConfigured) {
 
 // --- Gemini API Helper (No changes needed) ---
 const callGemini = async (prompt) => {
-    // IMPORTANT: In a real production app, never expose your API key on the client-side.
-    // This call should be moved to a secure backend or a Supabase Edge Function.
-    const apiKey = ""; // You still need a way to provide this
+    const apiKey = ""; 
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
     const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.7, topK: 1, topP: 1, maxOutputTokens: 200 } };
     try {
@@ -50,71 +47,74 @@ const getStartOfWeek = (date) => {
 
 // --- Main App Component ---
 export default function App() {
-    const [view, setView] = useState('logger'); // 'logger' or 'stats'
+    const [view, setView] = useState('logger');
     const [tips, setTips] = useState([]);
     const [user, setUser] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    // --- Authentication & Data Fetching Effect ---
+    // Effect for handling Authentication
     useEffect(() => {
         if (!isConfigured) {
-            setError("Supabase is not configured. Add your URL and Anon Key to a .env file.");
+            setError("Supabase is not configured. Add your URL and Anon Key to your environment variables.");
             setIsLoading(false);
             return;
         }
 
-        const fetchTips = async (userId) => {
-            const { data, error } = await supabase
-                .from('tips')
-                .select('*')
-                .eq('user_id', userId)
-                .order('created_at', { ascending: false });
-
-            if (error) {
-                console.error("Error fetching tips:", error);
-                setError("Failed to load tips. Check your connection and RLS policies.");
-            } else {
-                // Map Supabase columns to original app structure
-                const formattedTips = data.map(tip => ({
-                    id: tip.id,
-                    amount: tip.amount,
-                    timestamp: tip.created_at // Use the correct column name
-                }));
-                setTips(formattedTips);
-            }
-            setIsLoading(false);
-        };
-
         const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            const currentUser = session?.user;
-            setUser(currentUser ?? null);
-
-            if (!currentUser) {
-                supabase.auth.signInAnonymously();
-            } else {
-                fetchTips(currentUser.id);
-            }
+            setUser(session?.user ?? null);
+            setIsLoading(false);
         });
         
-        const tipsSubscription = supabase.channel('public:tips')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'tips' }, (payload) => {
-                if (user) {
-                   fetchTips(user.id);
-                }
-            })
-            .subscribe();
+        supabase.auth.getSession().then(({ data: { session } }) => {
+            if (!session) {
+                supabase.auth.signInAnonymously();
+            } else {
+                setUser(session.user);
+                setIsLoading(false);
+            }
+        });
 
         return () => {
             subscription?.unsubscribe();
-            supabase.removeChannel(tipsSubscription);
         };
-    }, []); // <-- THE ONLY CHANGE IS HERE: from [user] to []
+    }, []);
 
-    // --- Render Logic ---
-    if (!isConfigured) {
-        return <ErrorScreen message="Supabase is not configured. Add your URL and Anon Key to a .env file." />
-    }
+    // Effect for fetching data and setting up subscription whenever the user changes
+    useEffect(() => {
+        if (user) {
+            const fetchTips = async () => {
+                const { data, error } = await supabase
+                    .from('tips')
+                    .select('*')
+                    .eq('user_id', user.id)
+                    .order('created_at', { ascending: false });
+
+                if (error) {
+                    console.error("Error fetching tips:", error);
+                    setError("Failed to load tips.");
+                } else {
+                    const formattedTips = data.map(tip => ({ id: tip.id, amount: tip.amount, timestamp: tip.created_at }));
+                    setTips(formattedTips);
+                }
+            };
+
+            fetchTips();
+
+            const channel = supabase.channel(`public:tips:user_id=eq.${user.id}`)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'tips', filter: `user_id=eq.${user.id}` }, 
+                (payload) => {
+                    fetchTips();
+                })
+                .subscribe();
+
+            return () => {
+                supabase.removeChannel(channel);
+            };
+        }
+    }, [user]); // <-- THIS IS THE CORRECTED LINE
+
+    if (!isConfigured) return <ErrorScreen message="Supabase is not configured. Follow the setup guide." />
     if (isLoading) return <LoadingScreen />;
     if (error) return <ErrorScreen message={error} />
 
@@ -129,7 +129,7 @@ export default function App() {
     );
 }
 
-// --- Tip Logger View (Modified for Supabase) ---
+// --- UI Components (No changes below this line) ---
 const TipLogger = ({ tips, user, setView }) => {
     const [amount, setAmount] = useState('');
     const [isAdding, setIsAdding] = useState(false);
@@ -151,9 +151,7 @@ const TipLogger = ({ tips, user, setView }) => {
                 .from('tips')
                 .insert([{ amount: tipAmount, user_id: user.id }]);
 
-            if (error) {
-                throw error;
-            }
+            if (error) throw error;
             setAmount('');
         } catch (error) {
             console.error("Error adding tip: ", error);
@@ -162,7 +160,7 @@ const TipLogger = ({ tips, user, setView }) => {
             setIsAdding(false);
         }
     };
-
+    
     const handleGetPepTalk = async () => {
         setIsGeneratingPepTalk(true);
         setPepTalk('');
@@ -173,7 +171,7 @@ const TipLogger = ({ tips, user, setView }) => {
     };
 
     return (
-         <div>
+        <div>
             <form onSubmit={handleAddTip} className="bg-slate-800 p-4 rounded-lg shadow-lg mb-6">
                 <div className="flex flex-col sm:flex-row gap-4">
                     <div className="relative flex-grow">
@@ -220,9 +218,6 @@ const TipLogger = ({ tips, user, setView }) => {
         </div>
     );
 };
-
-// --- Other components (Header, LoadingScreen, ErrorScreen, StatsDashboard, etc.) ---
-// --- No changes are needed for these components. You can copy them from your original file. ---
 
 const Header = ({ userId }) => (
     <header className="mb-6">
