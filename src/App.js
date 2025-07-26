@@ -1,57 +1,24 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, addDoc, onSnapshot, query } from 'firebase/firestore';
+import { createClient } from '@supabase/supabase-js';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { DollarSign, BarChart2, ArrowLeft, Plus, Sparkles } from 'lucide-react';
 
-// --- Firebase Configuration ---
-// This logic handles configuration for both the interactive canvas and a deployed environment.
-let firebaseConfig = {};
-let initialAuthToken = null;
+// --- Supabase Configuration ---
+const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
+const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 
-// This variable captures the app ID specific to the canvas environment.
-const appId = typeof __app_id !== 'undefined' ? __app_id : null; // eslint-disable-line no-undef
-
-// First, check for the special environment variables provided by the canvas.
-if (typeof __firebase_config !== 'undefined' && __firebase_config) { // eslint-disable-line no-undef
-    try {
-        firebaseConfig = JSON.parse(__firebase_config); // eslint-disable-line no-undef
-    } catch (e) {
-        console.error("Failed to parse __firebase_config:", e);
-    }
-    if (typeof __initial_auth_token !== 'undefined') { // eslint-disable-line no-undef
-        initialAuthToken = __initial_auth_token; // eslint-disable-line no-undef
-    }
-} else {
-    // If canvas variables aren't present, fall back to process.env for deployed environments.
-    // This code will be used when you deploy the app to Vercel, Netlify, etc.
-    firebaseConfig = {
-      apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
-      authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
-      projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
-      storageBucket: process.env.REACT_APP_FIREBASE_STORAGE_BUCKET,
-      messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
-      appId: process.env.REACT_APP_FIREBASE_APP_ID
-    };
-}
-
-// --- Firebase Initialization ---
-// Add a check to ensure config is not empty before initializing
-let app;
-let auth;
-let db;
-const isConfigured = firebaseConfig.apiKey && firebaseConfig.projectId;
+// Check if Supabase is configured
+const isConfigured = supabaseUrl && supabaseAnonKey;
+let supabase;
 if (isConfigured) {
-    app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
-    db = getFirestore(app);
+    supabase = createClient(supabaseUrl, supabaseAnonKey);
 }
 
-
-// --- Gemini API Helper ---
+// --- Gemini API Helper (No changes needed) ---
 const callGemini = async (prompt) => {
-    const apiKey = ""; // Provided by the environment
+    // IMPORTANT: In a real production app, never expose your API key on the client-side.
+    // This call should be moved to a secure backend or a Supabase Edge Function.
+    const apiKey = ""; // You still need a way to provide this
     const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
     const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.7, topK: 1, topP: 1, maxOutputTokens: 200 } };
     try {
@@ -68,8 +35,7 @@ const callGemini = async (prompt) => {
     }
 };
 
-
-// --- Helper Functions ---
+// --- Helper Functions (No changes needed) ---
 const isToday = (someDate) => {
     const today = new Date();
     const d = new Date(someDate);
@@ -82,78 +48,75 @@ const getStartOfWeek = (date) => {
     return new Date(d.setDate(diff)).toISOString().split('T')[0];
 };
 
-
 // --- Main App Component ---
 export default function App() {
     const [view, setView] = useState('logger'); // 'logger' or 'stats'
     const [tips, setTips] = useState([]);
-    const [userId, setUserId] = useState(null);
+    const [user, setUser] = useState(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState(null);
 
-    // --- Authentication Effect ---
+    // --- Authentication & Data Fetching Effect ---
     useEffect(() => {
         if (!isConfigured) {
-            setError("Firebase is not configured. Follow the deployment guide to set it up.");
+            setError("Supabase is not configured. Add your URL and Anon Key to a .env file.");
             setIsLoading(false);
             return;
         }
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (user) {
-                setUserId(user.uid);
-            } else {
-                try {
-                    // Use the custom token if available (in the canvas environment)
-                    if (initialAuthToken) {
-                        await signInWithCustomToken(auth, initialAuthToken);
-                    } else {
-                    // Otherwise, sign in anonymously (for the deployed app)
-                        await signInAnonymously(auth);
-                    }
-                } catch (err) {
-                    console.error("Authentication failed:", err);
-                    setError("Could not connect to the authentication service.");
-                }
-            }
-        });
-        return () => unsubscribe();
-    }, []);
 
-    // --- Data Fetching Effect ---
-    useEffect(() => {
-        if (!userId || !isConfigured) {
-            if(isConfigured) setIsLoading(false);
-            return;
+        const fetchTips = async (userId) => {
+            const { data, error } = await supabase
+                .from('tips')
+                .select('*')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false });
+
+            if (error) {
+                console.error("Error fetching tips:", error);
+                setError("Failed to load tips. Check your connection and RLS policies.");
+            } else {
+                // Map Supabase columns to original app structure
+                const formattedTips = data.map(tip => ({
+                    id: tip.id,
+                    amount: tip.amount,
+                    timestamp: tip.created_at // Use the correct column name
+                }));
+                setTips(formattedTips);
+            }
+            setIsLoading(false);
         };
 
-        setIsLoading(true);
-        // Use the required path for the canvas environment, and a simpler path for deployment.
-        const tipsCollectionPath = appId
-            ? `artifacts/${appId}/users/${userId}/tips`
-            : `users/${userId}/tips`;
-        
-        const q = query(collection(db, tipsCollectionPath));
+        const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+            const currentUser = session?.user;
+            setUser(currentUser ?? null);
 
-        const unsubscribe = onSnapshot(q, (querySnapshot) => {
-            const tipsData = [];
-            querySnapshot.forEach((doc) => {
-                tipsData.push({ id: doc.id, ...doc.data() });
-            });
-            tipsData.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-            setTips(tipsData);
-            setIsLoading(false);
-        }, (err) => {
-            console.error("Error fetching tips:", err);
-            setError("Failed to load tips. Check your connection and Firestore rules.");
-            setIsLoading(false);
+            // If there's no user, sign in anonymously
+            if (!currentUser) {
+                supabase.auth.signInAnonymously();
+            } else {
+                fetchTips(currentUser.id);
+            }
         });
+        
+        // --- Realtime Subscription for Tips ---
+        const tipsSubscription = supabase.channel('public:tips')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'tips' }, (payload) => {
+                // When a change occurs, refetch all tips to update the UI
+                if (user) {
+                   fetchTips(user.id);
+                }
+            })
+            .subscribe();
 
-        return () => unsubscribe();
-    }, [userId]);
-    
+        return () => {
+            subscription?.unsubscribe();
+            supabase.removeChannel(tipsSubscription);
+        };
+    }, [user]);
+
     // --- Render Logic ---
     if (!isConfigured) {
-        return <ErrorScreen message="Firebase is not configured. Follow the deployment guide to set it up." />
+        return <ErrorScreen message="Supabase is not configured. Add your URL and Anon Key to a .env file." />
     }
     if (isLoading) return <LoadingScreen />;
     if (error) return <ErrorScreen message={error} />
@@ -161,45 +124,16 @@ export default function App() {
     return (
         <div className="bg-slate-900 text-white min-h-screen font-sans">
             <div className="container mx-auto p-4 max-w-4xl">
-                 <Header userId={userId} />
-                {view === 'logger' && <TipLogger tips={tips} userId={userId} setView={setView} />}
+                 <Header userId={user?.id} />
+                {view === 'logger' && <TipLogger tips={tips} user={user} setView={setView} />}
                 {view === 'stats' && <StatsDashboard tips={tips} setView={setView} />}
             </div>
         </div>
     );
 }
 
-// --- UI Components ---
-
-const Header = ({ userId }) => (
-    <header className="mb-6">
-        <h1 className="text-4xl font-bold text-emerald-400 text-center">Tip Tracker</h1>
-        <p className="text-center text-slate-400 mt-2">Log your tips and track your earnings with AI insights.</p>
-        {userId && <p className="text-center text-xs text-slate-500 mt-2 break-all">User ID: {userId}</p>}
-    </header>
-);
-
-const LoadingScreen = () => (
-    <div className="flex items-center justify-center min-h-screen bg-slate-900">
-        <div className="text-center">
-            <div className="w-16 h-16 border-4 border-dashed rounded-full animate-spin border-emerald-500 mx-auto"></div>
-            <p className="text-white text-xl mt-4">Loading Your Tips...</p>
-        </div>
-    </div>
-);
-
-const ErrorScreen = ({ message }) => (
-     <div className="flex items-center justify-center min-h-screen bg-slate-900">
-        <div className="text-center p-8 bg-slate-800 rounded-lg shadow-lg">
-            <h2 className="text-red-500 text-2xl font-bold mb-4">An Error Occurred</h2>
-            <p className="text-white">{message}</p>
-        </div>
-    </div>
-);
-
-
-// --- Tip Logger View ---
-const TipLogger = ({ tips, userId, setView }) => {
+// --- Tip Logger View (Modified for Supabase) ---
+const TipLogger = ({ tips, user, setView }) => {
     const [amount, setAmount] = useState('');
     const [isAdding, setIsAdding] = useState(false);
     const [pepTalk, setPepTalk] = useState('');
@@ -212,27 +146,26 @@ const TipLogger = ({ tips, userId, setView }) => {
     const handleAddTip = async (e) => {
         e.preventDefault();
         const tipAmount = parseFloat(amount);
-        if (!tipAmount || tipAmount <= 0 || !userId) return;
+        if (!tipAmount || tipAmount <= 0 || !user) return;
 
         setIsAdding(true);
         try {
-            // Use the required path for the canvas environment, and a simpler path for deployment.
-            const tipsCollectionPath = appId
-                ? `artifacts/${appId}/users/${userId}/tips`
-                : `users/${userId}/tips`;
+            const { error } = await supabase
+                .from('tips')
+                .insert([{ amount: tipAmount, user_id: user.id }]);
 
-            await addDoc(collection(db, tipsCollectionPath), {
-                amount: tipAmount,
-                timestamp: new Date().toISOString(),
-            });
+            if (error) {
+                throw error;
+            }
             setAmount('');
         } catch (error) {
             console.error("Error adding tip: ", error);
+            alert("Error adding tip: " + error.message);
         } finally {
             setIsAdding(false);
         }
     };
-    
+
     const handleGetPepTalk = async () => {
         setIsGeneratingPepTalk(true);
         setPepTalk('');
@@ -243,7 +176,7 @@ const TipLogger = ({ tips, userId, setView }) => {
     };
 
     return (
-        <div>
+         <div>
             <form onSubmit={handleAddTip} className="bg-slate-800 p-4 rounded-lg shadow-lg mb-6">
                 <div className="flex flex-col sm:flex-row gap-4">
                     <div className="relative flex-grow">
@@ -291,7 +224,35 @@ const TipLogger = ({ tips, userId, setView }) => {
     );
 };
 
-// --- Statistics Dashboard View (No changes from previous Firebase version) ---
+// --- Other components (Header, LoadingScreen, ErrorScreen, StatsDashboard, etc.) ---
+// --- No changes are needed for these components. You can copy them from your original file. ---
+
+const Header = ({ userId }) => (
+    <header className="mb-6">
+        <h1 className="text-4xl font-bold text-emerald-400 text-center">Tip Tracker</h1>
+        <p className="text-center text-slate-400 mt-2">Log your tips and track your earnings with AI insights.</p>
+        {userId && <p className="text-center text-xs text-slate-500 mt-2 break-all">User ID: {userId}</p>}
+    </header>
+);
+
+const LoadingScreen = () => (
+    <div className="flex items-center justify-center min-h-screen bg-slate-900">
+        <div className="text-center">
+            <div className="w-16 h-16 border-4 border-dashed rounded-full animate-spin border-emerald-500 mx-auto"></div>
+            <p className="text-white text-xl mt-4">Loading Your Tips...</p>
+        </div>
+    </div>
+);
+
+const ErrorScreen = ({ message }) => (
+     <div className="flex items-center justify-center min-h-screen bg-slate-900">
+        <div className="text-center p-8 bg-slate-800 rounded-lg shadow-lg">
+            <h2 className="text-red-500 text-2xl font-bold mb-4">An Error Occurred</h2>
+            <p className="text-white">{message}</p>
+        </div>
+    </div>
+);
+
 const StatsDashboard = ({ tips, setView }) => {
     const [insights, setInsights] = useState('');
     const [isGeneratingInsights, setIsGeneratingInsights] = useState(false);
